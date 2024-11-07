@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -37,10 +38,27 @@ func NewClient(config ClientConfig) *Client {
 	}
 }
 
+// formatUID formats a UID into the required URL format
+func formatUID(uid string) string {
+	return fmt.Sprintf("https://nfc.cursive.team/tap?uid=%s", uid)
+}
+
 // ValidateUIDs sends UIDs to the Cursive server for validation
 func (c *Client) ValidateUIDs(ctx context.Context, uids []string) (*ValidationResponse, error) {
+	// Format UIDs according to the specified format
+	formattedUIDs := make([]string, len(uids))
+	for i, uid := range uids {
+		formattedUIDs[i] = formatUID(uid)
+	}
+
+	// Extract raw UIDs for the payload
+	rawUIDs := make([]string, len(uids))
+	for i, uid := range uids {
+		rawUIDs[i] = uid
+	}
+
 	payload := ValidationRequest{
-		UIDs: uids,
+		UIDs: rawUIDs,
 	}
 
 	var response ValidationResponse

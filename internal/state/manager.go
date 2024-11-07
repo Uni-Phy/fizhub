@@ -2,7 +2,10 @@ package state
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -97,6 +100,7 @@ func (m *Manager) handleNFCTap(uid string) error {
 		}
 	}
 
+	// Store the raw UID
 	m.collectedUIDs = append(m.collectedUIDs, uid)
 
 	// If we have three UIDs, transition to validation phase
@@ -128,7 +132,6 @@ func (m *Manager) handleRecordingStarted() error {
 		return errors.New("not in recording phase")
 	}
 
-	// Additional recording setup logic can go here
 	return nil
 }
 
@@ -194,6 +197,18 @@ func (m *Manager) GetCollectedUIDs() []string {
 	return append([]string{}, m.collectedUIDs...)
 }
 
+// GetFormattedUIDs returns the UIDs in the Cursive URL format
+func (m *Manager) GetFormattedUIDs() []string {
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+	
+	formatted := make([]string, len(m.collectedUIDs))
+	for i, uid := range m.collectedUIDs {
+		formatted[i] = fmt.Sprintf("https://nfc.cursive.team/tap?uid=%s", uid)
+	}
+	return formatted
+}
+
 // GetBondID returns the current bond ID
 func (m *Manager) GetBondID() string {
 	m.mutex.RLock()
@@ -215,10 +230,14 @@ func (m *Manager) Reset() {
 
 // generateBondID creates a unique bond ID from UIDs
 func generateBondID(uids []string) string {
-	// TODO: Implement actual bond ID generation logic
-	// This could involve:
-	// 1. Hashing the UIDs
-	// 2. Adding a timestamp
-	// 3. Adding a random component
-	return "bond-id-placeholder"
+	// Create a unique identifier by combining UIDs and timestamp
+	timestamp := time.Now().UTC().Format(time.RFC3339)
+	combined := fmt.Sprintf("%s-%s", timestamp, uids)
+	
+	// Generate SHA-256 hash
+	hash := sha256.New()
+	hash.Write([]byte(combined))
+	
+	// Return first 16 characters of the hex-encoded hash
+	return hex.EncodeToString(hash.Sum(nil))[:16]
 }

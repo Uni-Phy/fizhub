@@ -3,7 +3,7 @@
     "port": "8080"
   },
   "cursive": {
-    "url": "http://cursive-server/api/validate_uids",
+    "url": "http://nfc.cursive.team",
     "timeout": "30s"
   },
   "nfc": {
