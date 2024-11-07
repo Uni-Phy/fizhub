@@ -1,0 +1,25 @@
+{
+  "server": {
+    "port": "8080"
+  },
+  "cursive": {
+    "url": "http://cursive-server/api/validate_uids",
+    "timeout": "30s"
+  },
+  "nfc": {
+    "power_timeout": "30s"
+  },
+  "power": {
+    "idle_timeout": "5m",
+    "deep_sleep_delay": "10m"
+  },
+  "audio": {
+    "format": {
+      "sample_rate": 44100,
+      "channels": 1,
+      "bit_depth": 16
+    },
+    "max_duration": "3m",
+    "device_id": "default"
+  }
+}
