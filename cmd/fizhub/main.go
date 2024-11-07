@@ -21,30 +21,6 @@ import (
 	"github.com/gorilla/mux"
 )
 
-// Duration is a wrapper around time.Duration for JSON unmarshaling
-type Duration struct {
-	time.Duration
-}
-
-// UnmarshalJSON implements json.Unmarshaler
-func (d *Duration) UnmarshalJSON(b []byte) error {
-	var v interface{}
-	if err := json.Unmarshal(b, &v); err != nil {
-		return err
-	}
-	switch value := v.(type) {
-	case string:
-		var err error
-		d.Duration, err = time.ParseDuration(value)
-		if err != nil {
-			return err
-		}
-		return nil
-	default:
-		return fmt.Errorf("invalid duration")
-	}
-}
-
 type Config struct {
 	Server struct {
 		Port string `json:"port"`
@@ -53,6 +29,11 @@ type Config struct {
 		URL     string   `json:"url"`
 		Timeout Duration `json:"timeout"`
 	} `json:"cursive"`
+	MQTT struct {
+		Port     int    `json:"port"`
+		Username string `json:"username"`
+		Password string `json:"password"`
+	} `json:"mqtt"`
 	NFC struct {
 		PowerTimeout Duration `json:"power_timeout"`
 	} `json:"nfc"`
@@ -73,6 +54,30 @@ type Application struct {
 	stateMgr   *state.Manager
 	recorder   *audio.Recorder
 	client     *network.Client
+	mqttBroker *network.MQTTBroker
+}
+
+// Duration is a wrapper around time.Duration for JSON unmarshaling
+type Duration struct {
+	time.Duration
+}
+
+func (d *Duration) UnmarshalJSON(b []byte) error {
+	var v interface{}
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	switch value := v.(type) {
+	case string:
+		var err error
+		d.Duration, err = time.ParseDuration(value)
+		if err != nil {
+			return err
+		}
+		return nil
+	default:
+		return fmt.Errorf("invalid duration")
+	}
 }
 
 func loadConfig() (Config, error) {
@@ -97,6 +102,9 @@ func getDefaultConfig() Config {
 	config.Server.Port = "8080"
 	config.Cursive.URL = "http://nfc.cursive.team"
 	config.Cursive.Timeout = Duration{30 * time.Second}
+	config.MQTT.Port = 1883
+	config.MQTT.Username = "fizhub"
+	config.MQTT.Password = "fizpassword"
 	config.NFC.PowerTimeout = Duration{30 * time.Second}
 	config.Power.IdleTimeout = Duration{5 * time.Minute}
 	config.Power.DeepSleepDelay = Duration{10 * time.Minute}
@@ -136,6 +144,13 @@ func NewApplication(config Config) *Application {
 	app.client = network.NewClient(network.ClientConfig{
 		BaseURL: config.Cursive.URL,
 		Timeout: config.Cursive.Timeout.Duration,
+	})
+
+	log.Println("Initializing MQTT broker...")
+	app.mqttBroker = network.NewMQTTBroker(network.MQTTConfig{
+		Port:     config.MQTT.Port,
+		Username: config.MQTT.Username,
+		Password: config.MQTT.Password,
 	})
 
 	return app
@@ -206,6 +221,11 @@ func (app *Application) initializeComponents(ctx context.Context) error {
 		return fmt.Errorf("failed to start audio recorder: %w", err)
 	}
 
+	log.Println("Starting MQTT broker...")
+	if err := app.mqttBroker.Start(ctx); err != nil {
+		return fmt.Errorf("failed to start MQTT broker: %w", err)
+	}
+
 	log.Println("Setting up component interactions...")
 	app.setupComponentInteractions()
 
@@ -213,11 +233,17 @@ func (app *Application) initializeComponents(ctx context.Context) error {
 }
 
 func (app *Application) setupComponentInteractions() {
-	// Handle NFC tap events
+	// Handle NFC tap events from local reader
 	app.nfcReader.SetTapHandler(func(uid string) error {
 		log.Printf("NFC tap detected: %s", uid)
 		app.powerMgr.RecordActivity()
 		return app.stateMgr.HandleEvent(state.EventNFCTap, uid)
+	})
+
+	// Handle NFC tap events from remote readers
+	app.mqttBroker.SetUIDHandler(func(msg network.UIDMessage) {
+		log.Printf("Received UID from device %s: %s", msg.DeviceID, msg.UID)
+		app.stateMgr.HandleEvent(state.EventNFCTap, msg.UID)
 	})
 
 	// Handle state changes
@@ -258,6 +284,7 @@ func (app *Application) setupRoutes() {
 	log.Println("Setting up HTTP routes...")
 	app.router.HandleFunc("/api/receive_uid", app.handleReceiveUID).Methods("POST")
 	app.router.HandleFunc("/api/status", app.handleStatus).Methods("GET")
+	app.router.HandleFunc("/api/devices", app.handleDevices).Methods("GET")
 }
 
 func (app *Application) handleReceiveUID(w http.ResponseWriter, r *http.Request) {
@@ -300,6 +327,18 @@ func (app *Application) handleStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(status); err != nil {
 		log.Printf("Error encoding status response: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+}
+
+func (app *Application) handleDevices(w http.ResponseWriter, r *http.Request) {
+	log.Println("Devices request received")
+	devices := app.mqttBroker.GetDevices()
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(devices); err != nil {
+		log.Printf("Error encoding devices response: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -349,6 +388,9 @@ func (app *Application) Shutdown() error {
 	
 	log.Println("Stopping audio recorder...")
 	app.recorder.StopRecording()
+
+	log.Println("Stopping MQTT broker...")
+	app.mqttBroker.Stop()
 
 	log.Println("Shutdown complete")
 	return nil
