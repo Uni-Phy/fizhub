@@ -50,7 +50,7 @@ func NewManager() *Manager {
 		currentPhase:  PhaseInitial,
 		collectedUIDs: make([]string, 0),
 		subscribers:   make(map[Phase][]func(Phase)),
-		errorHandlers: make([]func(error)),
+		errorHandlers: make([]func(error), 0),
 	}
 }
 
